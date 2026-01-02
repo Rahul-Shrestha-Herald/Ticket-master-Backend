@@ -1038,3 +1038,6 @@ export const searchBuses = async (req, res) => {
     });
   }
 };
+
+
+// Get booking details by booking ID
