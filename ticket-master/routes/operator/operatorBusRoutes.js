@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { addBus, getOperatorBuses, getBusById, updateBus, deleteBus, uploadFile } from '../../controllers/operator/busController.js';
+import { addBus, getOperatorBuses, getBusById, updateBus, deleteBus, uploadFile, updateSeatStatus, bulkUpdateSeatStatus } from '../../controllers/operator/busController.js';
 import operatorAuth from '../../middleware/operator/operatorAuth.js';
 
 const router = express.Router();
@@ -26,5 +26,9 @@ router.get('/buses/:id', operatorAuth, getBusById);
 router.put('/buses/:id', operatorAuth, updateBus);
 router.delete('/buses/:id', operatorAuth, deleteBus);
 router.post('/upload-file', operatorAuth, upload.single('file'), uploadFile);
+
+// Seat status management
+router.put('/buses/:busId/seat-status', operatorAuth, updateSeatStatus);
+router.put('/buses/:busId/seat-status/bulk', operatorAuth, bulkUpdateSeatStatus);
 
 export default router;

@@ -164,6 +164,39 @@ export const addBus = async (req, res) => {
             rightImageUrl = await uploadFileToDrive(req.files.busImageRight[0], folderId, req.operator.email, true);
         }
 
+        // Parse seat layout if provided
+        let parsedSeatLayout = null;
+        let damagedSeats = [];
+        
+        if (req.body.seatLayout) {
+            try {
+                parsedSeatLayout = typeof req.body.seatLayout === 'string' 
+                    ? JSON.parse(req.body.seatLayout) 
+                    : req.body.seatLayout;
+                
+                // Extract damaged seats
+                if (parsedSeatLayout.seats) {
+                    damagedSeats = parsedSeatLayout.seats
+                        .filter(seat => seat.status === 'damaged')
+                        .map(seat => seat.seatId);
+                }
+            } catch (error) {
+                console.error('Error parsing seat layout:', error);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid seat layout format'
+                });
+            }
+        }
+
+        // Validate seat layout
+        if (!parsedSeatLayout || !parsedSeatLayout.seats || parsedSeatLayout.seats.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Seat layout is required. Please design at least one seat.'
+            });
+        }
+
         // Create a new Bus document with the authenticated operator's id
         const newBus = new Bus({
             busName,
@@ -184,6 +217,8 @@ export const addBus = async (req, res) => {
                 left: leftImageUrl,
                 right: rightImageUrl,
             },
+            seatLayout: parsedSeatLayout,
+            damagedSeats: damagedSeats,
             createdBy: req.operator.id,  // using operator id from token payload
             verified: false,
         });
@@ -229,7 +264,7 @@ export const updateBus = async (req, res) => {
         }
 
         // Update allowed fields
-        const { busDescription, primaryContactNumber, secondaryContactNumber, reservationPolicies, amenities, images, documents } = req.body;
+        const { busDescription, primaryContactNumber, secondaryContactNumber, reservationPolicies, amenities, images, documents, seatLayout } = req.body;
 
         if (busDescription !== undefined) bus.busDescription = busDescription;
         if (primaryContactNumber !== undefined) {
@@ -245,6 +280,28 @@ export const updateBus = async (req, res) => {
         if (reservationPolicies !== undefined) bus.reservationPolicies = reservationPolicies;
         if (amenities !== undefined) bus.amenities = amenities;
         if (images !== undefined) bus.images = images;
+
+        // Update seat layout if provided
+        if (seatLayout !== undefined) {
+            try {
+                const parsedSeatLayout = typeof seatLayout === 'string' 
+                    ? JSON.parse(seatLayout) 
+                    : seatLayout;
+                
+                if (parsedSeatLayout && parsedSeatLayout.seats) {
+                    bus.seatLayout = parsedSeatLayout;
+                    // Update damaged seats list
+                    bus.damagedSeats = parsedSeatLayout.seats
+                        .filter(seat => seat.status === 'damaged')
+                        .map(seat => seat.seatId);
+                }
+            } catch (error) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid seat layout format'
+                });
+            }
+        }
 
         // Update documents only if the bus is unverified
         if (!bus.verified && documents !== undefined) {
@@ -294,5 +351,147 @@ export const uploadFile = async (req, res) => {
         res.json({ success: true, driveUrl });
     } catch (error) {
         res.status(500).json({ success: false, message: "Server error. Try again later." });
+    }
+};
+
+// Update seat status (mark as damaged/available)
+export const updateSeatStatus = async (req, res) => {
+    try {
+        const { busId } = req.params;
+        const { seatId, status } = req.body;
+
+        if (!seatId || !status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Seat ID and status are required'
+            });
+        }
+
+        if (!['available', 'damaged', 'maintenance'].includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status. Must be: available, damaged, or maintenance'
+            });
+        }
+
+        const bus = await Bus.findOne({ _id: busId, createdBy: req.operator.id });
+        
+        if (!bus) {
+            return res.status(404).json({
+                success: false,
+                message: 'Bus not found'
+            });
+        }
+
+        if (!bus.seatLayout || !bus.seatLayout.seats) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bus does not have a seat layout configured'
+            });
+        }
+
+        // Update seat status in layout
+        const seatIndex = bus.seatLayout.seats.findIndex(s => s.seatId === seatId);
+        if (seatIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                message: 'Seat not found in layout'
+            });
+        }
+
+        bus.seatLayout.seats[seatIndex].status = status;
+
+        // Update damaged seats array
+        if (status === 'damaged') {
+            if (!bus.damagedSeats.includes(seatId)) {
+                bus.damagedSeats.push(seatId);
+            }
+        } else {
+            bus.damagedSeats = bus.damagedSeats.filter(id => id !== seatId);
+        }
+
+        await bus.save();
+
+        res.json({
+            success: true,
+            message: `Seat ${seatId} status updated to ${status}`,
+            seat: bus.seatLayout.seats[seatIndex]
+        });
+    } catch (error) {
+        console.error('Error updating seat status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error. Try again later.'
+        });
+    }
+};
+
+// Bulk update seat statuses
+export const bulkUpdateSeatStatus = async (req, res) => {
+    try {
+        const { busId } = req.params;
+        const { seatUpdates } = req.body; // Array of { seatId, status }
+
+        if (!Array.isArray(seatUpdates) || seatUpdates.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'seatUpdates array is required'
+            });
+        }
+
+        const bus = await Bus.findOne({ _id: busId, createdBy: req.operator.id });
+        
+        if (!bus) {
+            return res.status(404).json({
+                success: false,
+                message: 'Bus not found'
+            });
+        }
+
+        if (!bus.seatLayout || !bus.seatLayout.seats) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bus does not have a seat layout configured'
+            });
+        }
+
+        let updatedCount = 0;
+        const updatedSeats = [];
+
+        seatUpdates.forEach(({ seatId, status }) => {
+            if (!['available', 'damaged', 'maintenance'].includes(status)) {
+                return;
+            }
+
+            const seatIndex = bus.seatLayout.seats.findIndex(s => s.seatId === seatId);
+            if (seatIndex !== -1) {
+                bus.seatLayout.seats[seatIndex].status = status;
+                updatedSeats.push(bus.seatLayout.seats[seatIndex]);
+                updatedCount++;
+
+                // Update damaged seats array
+                if (status === 'damaged') {
+                    if (!bus.damagedSeats.includes(seatId)) {
+                        bus.damagedSeats.push(seatId);
+                    }
+                } else {
+                    bus.damagedSeats = bus.damagedSeats.filter(id => id !== seatId);
+                }
+            }
+        });
+
+        await bus.save();
+
+        res.json({
+            success: true,
+            message: `Updated ${updatedCount} seat(s)`,
+            updatedSeats
+        });
+    } catch (error) {
+        console.error('Error bulk updating seat status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error. Try again later.'
+        });
     }
 };

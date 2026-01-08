@@ -80,23 +80,6 @@ export const operatorRegister = async (req, res) => {
       });
     }
 
-    // Validate PAN image if provided
-    if (req.file) {
-      const allowedMimeTypes = ['image/png', 'image/jpeg', 'image/jpg'];
-      if (!allowedMimeTypes.includes(req.file.mimetype)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid PAN image format. Only PNG, JPG, and JPEG are allowed.'
-        });
-      }
-      if (req.file.size > 1024 * 1024) {
-        return res.status(400).json({
-          success: false,
-          message: 'PAN image exceeds 1MB size limit'
-        });
-      }
-    }
-
     const existingOperator = await Operator.findOne({ email });
     if (existingOperator) {
       return res.status(400).json({
@@ -106,24 +89,13 @@ export const operatorRegister = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    let panImageUrl = '';
-
-    if (req.file) {
-      panImageUrl = await uploadFileToDrive(req.file);
-      if (!panImageUrl) {
-        return res.status(500).json({
-          success: false,
-          message: 'Error uploading PAN image'
-        });
-      }
-    }
 
     const newOperator = new Operator({
       name,
       email,
       password: hashedPassword,
       panNo,
-      panImage: panImageUrl, // Save URL here
+      panImage: '', // No longer required at signup
       isAccountVerified: false,
     });
 

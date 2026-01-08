@@ -1,10 +1,11 @@
-const express = require('express');
+import express from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import OperatorKYC from '../../models/operator/OperatorKYC.js';
+import operatorAuth from '../../middleware/operator/operatorAuth.js';
+
 const router = express.Router();
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const OperatorKYC = require('../../models/operator/OperatorKYC');
-const auth = require('../../middleware/auth');
 
 // Ensure uploads directory exists
 const uploadsDir = 'uploads/kyc';
@@ -13,21 +14,27 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Configure multer storage
+// Note: Multer destination runs during request parsing, so we use a temp directory
+// and move files in the route handler after auth is verified
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const operatorId = req.operator._id;
-    const operatorDir = path.join(uploadsDir, operatorId.toString());
-    
-    if (!fs.existsSync(operatorDir)) {
-      fs.mkdirSync(operatorDir, { recursive: true });
+    // Use temp directory initially - we'll move files after auth verification
+    const tempDir = path.join(uploadsDir, 'temp');
+    try {
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      cb(null, tempDir);
+    } catch (error) {
+      cb(error, null);
     }
-    
-    cb(null, operatorDir);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+    // Include operator ID in filename if available (will be set by auth middleware)
+    const operatorId = req.operator?.id || 'temp';
+    cb(null, `${operatorId}-${file.fieldname}-${uniqueSuffix}${ext}`);
   }
 });
 
@@ -49,17 +56,78 @@ const upload = multer({
   }
 });
 
-// Multiple file upload fields
+// Multer error handler middleware
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        message: 'File size exceeds 2MB limit'
+      });
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({
+        success: false,
+        message: 'Too many files uploaded'
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: `Upload error: ${err.message}`
+    });
+  }
+  if (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'File upload error'
+    });
+  }
+  next();
+};
+
+// Multiple file upload fields for all steps
 const uploadFields = upload.fields([
   { name: 'panImage', maxCount: 1 },
   { name: 'businessRegistrationImage', maxCount: 1 },
-  { name: 'idProofImage', maxCount: 1 }
+  { name: 'idProofImage', maxCount: 1 },
+  { name: 'drivingLicenseImage', maxCount: 1 },
+  { name: 'busPermitImage', maxCount: 1 },
+  { name: 'vehicleRegistrationImage', maxCount: 1 }
 ]);
 
-// Save KYC progress
-router.post('/save-progress', auth.operatorAuth, uploadFields, async (req, res) => {
+// Helper function to move files from temp to operator directory
+const moveFileToOperatorDir = (file, operatorId) => {
+  if (!file || !operatorId) return null;
+  
   try {
-    const operatorId = req.operator._id;
+    const tempPath = file.path;
+    const operatorDir = path.join(uploadsDir, operatorId.toString());
+    
+    if (!fs.existsSync(operatorDir)) {
+      fs.mkdirSync(operatorDir, { recursive: true });
+    }
+    
+    const newPath = path.join(operatorDir, path.basename(tempPath));
+    fs.renameSync(tempPath, newPath);
+    return newPath;
+  } catch (error) {
+    console.error('Error moving file:', error);
+    return null;
+  }
+};
+
+// Save KYC progress (step-by-step)
+router.post('/save-progress', operatorAuth, uploadFields, handleMulterError, async (req, res) => {
+  try {
+    // operatorAuth sets req.operator with { id, email } from JWT
+    const operatorId = req.operator?.id;
+    
+    if (!operatorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Operator authentication required'
+      });
+    }
     const {
       panNumber,
       businessName,
@@ -67,52 +135,75 @@ router.post('/save-progress', auth.operatorAuth, uploadFields, async (req, res) 
       businessRegistrationNumber,
       idProofType,
       idProofNumber,
-      bankAccountNumber,
-      bankName,
-      accountHolderName,
-      step
+      drivingLicenseNumber,
+      busPermitNumber,
+      vehicleRegistrationNumber,
+      currentStep
     } = req.body;
 
-    // Prepare KYC data
+    // Prepare KYC data based on current step
     const kycData = {
       operator: operatorId,
-      panNumber,
-      businessName,
-      businessAddress,
-      businessRegistrationNumber,
-      idProofType,
-      idProofNumber,
-      bankAccountNumber,
-      bankName,
-      accountHolderName,
-      step: parseInt(step) || 1,
+      currentStep: parseInt(currentStep) || 1,
       status: 'pending'
     };
 
-    // Handle file uploads
-    if (req.files) {
-      if (req.files.panImage) {
-        kycData.panImage = req.files.panImage[0].path;
-      }
-      if (req.files.businessRegistrationImage) {
-        kycData.businessRegistrationImage = req.files.businessRegistrationImage[0].path;
-      }
-      if (req.files.idProofImage) {
-        kycData.idProofImage = req.files.idProofImage[0].path;
-      }
+    // Step 1: PAN Details
+    if (panNumber) kycData.panNumber = panNumber;
+    if (req.files?.panImage) {
+      const movedPath = moveFileToOperatorDir(req.files.panImage[0], operatorId);
+      if (movedPath) kycData.panImage = movedPath;
+    }
+
+    // Step 2: Business Details
+    if (businessName) kycData.businessName = businessName;
+    if (businessAddress) kycData.businessAddress = businessAddress;
+    if (businessRegistrationNumber) kycData.businessRegistrationNumber = businessRegistrationNumber;
+    if (req.files?.businessRegistrationImage) {
+      const movedPath = moveFileToOperatorDir(req.files.businessRegistrationImage[0], operatorId);
+      if (movedPath) kycData.businessRegistrationImage = movedPath;
+    }
+
+    // Step 3: ID Proof
+    if (idProofType) kycData.idProofType = idProofType;
+    if (idProofNumber) kycData.idProofNumber = idProofNumber;
+    if (req.files?.idProofImage) {
+      const movedPath = moveFileToOperatorDir(req.files.idProofImage[0], operatorId);
+      if (movedPath) kycData.idProofImage = movedPath;
+    }
+
+    // Step 4: License & Permits
+    if (drivingLicenseNumber) kycData.drivingLicenseNumber = drivingLicenseNumber;
+    if (req.files?.drivingLicenseImage) {
+      const movedPath = moveFileToOperatorDir(req.files.drivingLicenseImage[0], operatorId);
+      if (movedPath) kycData.drivingLicenseImage = movedPath;
+    }
+    if (busPermitNumber) kycData.busPermitNumber = busPermitNumber;
+    if (req.files?.busPermitImage) {
+      const movedPath = moveFileToOperatorDir(req.files.busPermitImage[0], operatorId);
+      if (movedPath) kycData.busPermitImage = movedPath;
+    }
+    if (vehicleRegistrationNumber) kycData.vehicleRegistrationNumber = vehicleRegistrationNumber;
+    if (req.files?.vehicleRegistrationImage) {
+      const movedPath = moveFileToOperatorDir(req.files.vehicleRegistrationImage[0], operatorId);
+      if (movedPath) kycData.vehicleRegistrationImage = movedPath;
     }
 
     // Save or update KYC progress
     const existingKYC = await OperatorKYC.findOne({ operator: operatorId });
     
     if (existingKYC) {
-      // Update existing KYC
-      Object.assign(existingKYC, kycData);
+      // Update existing KYC - merge with existing data
+      Object.keys(kycData).forEach(key => {
+        if (kycData[key] !== undefined && kycData[key] !== '') {
+          existingKYC[key] = kycData[key];
+        }
+      });
       await existingKYC.save();
       res.json({
         success: true,
         message: 'KYC progress updated',
-        step: kycData.step
+        currentStep: existingKYC.currentStep
       });
     } else {
       // Create new KYC
@@ -121,22 +212,31 @@ router.post('/save-progress', auth.operatorAuth, uploadFields, async (req, res) 
       res.json({
         success: true,
         message: 'KYC progress saved',
-        step: kycData.step
+        currentStep: newKYC.currentStep
       });
     }
   } catch (error) {
     console.error('Error saving KYC progress:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to save KYC progress'
+      message: error.message || 'Failed to save KYC progress',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
 // Submit KYC for verification
-router.post('/submit', auth.operatorAuth, uploadFields, async (req, res) => {
+router.post('/submit', operatorAuth, uploadFields, handleMulterError, async (req, res) => {
   try {
-    const operatorId = req.operator._id;
+    // operatorAuth sets req.operator with { id, email } from JWT
+    const operatorId = req.operator?.id;
+    
+    if (!operatorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Operator authentication required'
+      });
+    }
     const {
       panNumber,
       businessName,
@@ -144,14 +244,13 @@ router.post('/submit', auth.operatorAuth, uploadFields, async (req, res) => {
       businessRegistrationNumber,
       idProofType,
       idProofNumber,
-      bankAccountNumber,
-      bankName,
-      accountHolderName
+      drivingLicenseNumber,
+      busPermitNumber,
+      vehicleRegistrationNumber
     } = req.body;
 
     // Validate required fields
-    if (!panNumber || !businessName || !businessAddress || !idProofNumber || 
-        !bankAccountNumber || !bankName || !accountHolderName) {
+    if (!panNumber || !businessName || !businessAddress || !idProofNumber) {
       return res.status(400).json({
         success: false,
         message: 'Please fill all required fields'
@@ -165,26 +264,51 @@ router.post('/submit', auth.operatorAuth, uploadFields, async (req, res) => {
       });
     }
 
+    // Move files from temp to operator directory
+    const panImagePath = moveFileToOperatorDir(req.files.panImage[0], operatorId);
+    const idProofImagePath = moveFileToOperatorDir(req.files.idProofImage[0], operatorId);
+
+    if (!panImagePath || !idProofImagePath) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to process uploaded files'
+      });
+    }
+
     // Prepare final KYC data
     const kycData = {
       operator: operatorId,
       panNumber,
       businessName,
       businessAddress,
-      businessRegistrationNumber,
-      idProofType,
+      businessRegistrationNumber: businessRegistrationNumber || '',
+      idProofType: idProofType || 'citizenship',
       idProofNumber,
-      bankAccountNumber,
-      bankName,
-      accountHolderName,
-      panImage: req.files.panImage[0].path,
-      idProofImage: req.files.idProofImage[0].path,
+      drivingLicenseNumber: drivingLicenseNumber || '',
+      busPermitNumber: busPermitNumber || '',
+      vehicleRegistrationNumber: vehicleRegistrationNumber || '',
+      panImage: panImagePath,
+      idProofImage: idProofImagePath,
       status: 'submitted',
-      submittedAt: new Date()
+      submittedAt: new Date(),
+      currentStep: 4
     };
 
     if (req.files.businessRegistrationImage) {
-      kycData.businessRegistrationImage = req.files.businessRegistrationImage[0].path;
+      const movedPath = moveFileToOperatorDir(req.files.businessRegistrationImage[0], operatorId);
+      if (movedPath) kycData.businessRegistrationImage = movedPath;
+    }
+    if (req.files.drivingLicenseImage) {
+      const movedPath = moveFileToOperatorDir(req.files.drivingLicenseImage[0], operatorId);
+      if (movedPath) kycData.drivingLicenseImage = movedPath;
+    }
+    if (req.files.busPermitImage) {
+      const movedPath = moveFileToOperatorDir(req.files.busPermitImage[0], operatorId);
+      if (movedPath) kycData.busPermitImage = movedPath;
+    }
+    if (req.files.vehicleRegistrationImage) {
+      const movedPath = moveFileToOperatorDir(req.files.vehicleRegistrationImage[0], operatorId);
+      if (movedPath) kycData.vehicleRegistrationImage = movedPath;
     }
 
     // Save KYC submission
@@ -208,79 +332,105 @@ router.post('/submit', auth.operatorAuth, uploadFields, async (req, res) => {
     console.error('Error submitting KYC:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to submit KYC'
+      message: error.message || 'Failed to submit KYC',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
 // Get KYC status
-router.get('/status', auth.operatorAuth, async (req, res) => {
+router.get('/status', operatorAuth, async (req, res) => {
   try {
-    const operatorId = req.operator._id;
+    const operatorId = req.operator?.id;
+    
+    if (!operatorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Operator authentication required'
+      });
+    }
     const kyc = await OperatorKYC.findOne({ operator: operatorId });
     
     if (kyc) {
       res.json({
         success: true,
         status: kyc.status,
+        currentStep: kyc.currentStep,
         kycData: {
           panNumber: kyc.panNumber,
           businessName: kyc.businessName,
-          businessAddress: kyc.businessAddress,
-          // Don't send file paths for security
+          businessAddress: kyc.businessAddress
         }
       });
     } else {
       res.json({
         success: true,
-        status: 'pending'
+        status: 'pending',
+        currentStep: 1
       });
     }
   } catch (error) {
     console.error('Error fetching KYC status:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch KYC status'
+      message: error.message || 'Failed to fetch KYC status',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-// Get saved KYC data
-router.get('/saved-data', auth.operatorAuth, async (req, res) => {
+// Get saved KYC data (for form pre-filling)
+router.get('/saved-data', operatorAuth, async (req, res) => {
   try {
-    const operatorId = req.operator._id;
+    const operatorId = req.operator?.id;
+    
+    if (!operatorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Operator authentication required'
+      });
+    }
     const kyc = await OperatorKYC.findOne({ operator: operatorId });
     
     if (kyc) {
       res.json({
         success: true,
         kycData: {
-          panNumber: kyc.panNumber,
-          businessName: kyc.businessName,
-          businessAddress: kyc.businessAddress,
-          businessRegistrationNumber: kyc.businessRegistrationNumber,
-          idProofType: kyc.idProofType,
-          idProofNumber: kyc.idProofNumber,
-          bankAccountNumber: kyc.bankAccountNumber,
-          bankName: kyc.bankName,
-          accountHolderName: kyc.accountHolderName
+          panNumber: kyc.panNumber || '',
+          panImage: kyc.panImage || '',
+          businessName: kyc.businessName || '',
+          businessAddress: kyc.businessAddress || '',
+          businessRegistrationNumber: kyc.businessRegistrationNumber || '',
+          businessRegistrationImage: kyc.businessRegistrationImage || '',
+          idProofType: kyc.idProofType || 'citizenship',
+          idProofNumber: kyc.idProofNumber || '',
+          idProofImage: kyc.idProofImage || '',
+          drivingLicenseNumber: kyc.drivingLicenseNumber || '',
+          drivingLicenseImage: kyc.drivingLicenseImage || '',
+          busPermitNumber: kyc.busPermitNumber || '',
+          busPermitImage: kyc.busPermitImage || '',
+          vehicleRegistrationNumber: kyc.vehicleRegistrationNumber || '',
+          vehicleRegistrationImage: kyc.vehicleRegistrationImage || ''
         },
-        step: kyc.step || 1
+        currentStep: kyc.currentStep || 1,
+        status: kyc.status
       });
     } else {
       res.json({
         success: true,
         kycData: {},
-        step: 1
+        currentStep: 1,
+        status: 'pending'
       });
     }
   } catch (error) {
     console.error('Error fetching saved KYC data:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch saved KYC data'
+      message: error.message || 'Failed to fetch saved KYC data',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-module.exports = router;
+export default router;

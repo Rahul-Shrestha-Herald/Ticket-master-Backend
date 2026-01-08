@@ -1,6 +1,7 @@
 import Admin from "../../models/admin/adminModel.js";
 import User from "../../models/userModel.js";
 import Operator from "../../models/operator/operatorModel.js";
+import OperatorKYC from "../../models/operator/OperatorKYC.js";
 import transporter from '../../config/nodemailer.js';
 
 // Get Admin Data
@@ -136,6 +137,150 @@ const buildOperatorQuery = (search, status) => {
   if (status === 'verified') query.isAccountVerified = true;
   if (status === 'unverified') query.isAccountVerified = false;
   return query;
+};
+
+// Get All KYC Submissions
+export const getKYCSubmissions = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const query = {};
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    const kycs = await OperatorKYC.find(query)
+      .populate('operator', 'name email panNo')
+      .populate('reviewedBy', 'name')
+      .sort({ submittedAt: -1, createdAt: -1 });
+    
+    res.json({
+      success: true,
+      kycs
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+};
+
+// Get Single KYC Details
+export const getKYCDetails = async (req, res) => {
+  try {
+    const kyc = await OperatorKYC.findById(req.params.id)
+      .populate('operator', 'name email panNo contact permanentAddress')
+      .populate('reviewedBy', 'name');
+    
+    if (!kyc) {
+      return res.status(404).json({
+        success: false,
+        message: 'KYC not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      kyc
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+};
+
+// Approve KYC
+export const approveKYC = async (req, res) => {
+  try {
+    const kyc = await OperatorKYC.findById(req.params.id).populate('operator');
+    
+    if (!kyc) {
+      return res.status(404).json({
+        success: false,
+        message: 'KYC not found'
+      });
+    }
+    
+    // Update KYC status
+    kyc.status = 'approved';
+    kyc.reviewedBy = req.admin.id;
+    kyc.reviewedAt = new Date();
+    await kyc.save();
+    
+    // Update operator verification status
+    const operator = await Operator.findById(kyc.operator._id);
+    if (operator) {
+      operator.isAccountVerified = true;
+      operator.isBlocked = false;
+      await operator.save();
+      
+      // Send approval email
+      const mailOptions = {
+        from: process.env.SENDER_EMAIL,
+        to: operator.email,
+        subject: 'KYC Verification Approved - ticket master',
+        text: `Hello ${operator.name},\n\nYour KYC verification has been approved by our administration team. \nYour operator account is now fully verified and you can access all features. \n\nBest regards,\nticket master Team`
+      };
+      
+      transporter.sendMail(mailOptions).catch(error => {
+        console.error('Error sending approval email:', error);
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'KYC approved successfully',
+      kyc
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+};
+
+// Reject KYC
+export const rejectKYC = async (req, res) => {
+  try {
+    const { rejectionReason } = req.body;
+    const kyc = await OperatorKYC.findById(req.params.id).populate('operator');
+    
+    if (!kyc) {
+      return res.status(404).json({
+        success: false,
+        message: 'KYC not found'
+      });
+    }
+    
+    // Update KYC status
+    kyc.status = 'rejected';
+    kyc.reviewedBy = req.admin.id;
+    kyc.reviewedAt = new Date();
+    kyc.rejectionReason = rejectionReason || 'KYC verification failed. Please review your documents and resubmit.';
+    await kyc.save();
+    
+    // Update operator status
+    const operator = await Operator.findById(kyc.operator._id);
+    if (operator) {
+      operator.isAccountVerified = false;
+      operator.isBlocked = false; // Don't block, just keep unverified
+      await operator.save();
+      
+      // Send rejection email
+      const mailOptions = {
+        from: process.env.SENDER_EMAIL,
+        to: operator.email,
+        subject: 'KYC Verification Rejected - ticket master',
+        text: `Hello ${operator.name},\n\nYour KYC verification has been rejected. \nReason: ${kyc.rejectionReason}\n\nPlease review your documents and resubmit your KYC for verification. \n\nBest regards,\nticket master Team`
+      };
+      
+      transporter.sendMail(mailOptions).catch(error => {
+        console.error('Error sending rejection email:', error);
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'KYC rejected successfully',
+      kyc
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
 };
 
 // Helper: Error Handler

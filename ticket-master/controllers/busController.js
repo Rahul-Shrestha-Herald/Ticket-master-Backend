@@ -190,23 +190,52 @@ export const getBusSeatData = async (req, res) => {
     // Create the seat data structure needed by the frontend
     const busSeatData = [];
 
-    // Define seat IDs based on the existing pattern
-    const frontRowIds = ['B1', 'B3', 'B5', 'B7', 'B9', 'B11', 'B13', 'B15', 'B17'];
-    const secondRowIds = ['B2', 'B4', 'B6', 'B8', 'B10', 'B12', 'B14', 'B16', 'B18'];
-    const thirdRowId = ['19'];
-    const fourthRowIds = ['A1', 'A3', 'A5', 'A7', 'A9', 'A11', 'A13', 'A15', 'A17'];
-    const fifthRowIds = ['A2', 'A4', 'A6', 'A8', 'A10', 'A12', 'A14', 'A16', 'A18'];
-
-    const allSeatIds = [
-      ...frontRowIds,
-      ...secondRowIds,
-      ...thirdRowId,
-      ...fourthRowIds,
-      ...fifthRowIds
-    ];
-
     // Get the price from the route
     const price = schedule.route.price || 1600;
+
+    // Get bus with seat layout
+    const bus = await Bus.findById(busId).select('seatLayout damagedSeats');
+
+    // Use dynamic seat layout if available, otherwise fall back to hardcoded pattern
+    let allSeats = [];
+    
+    if (bus && bus.seatLayout && bus.seatLayout.seats && bus.seatLayout.seats.length > 0) {
+      // Use dynamic layout from bus model
+      allSeats = bus.seatLayout.seats.map(seat => ({
+        seatId: seat.seatId,
+        label: seat.label,
+        row: seat.row,
+        col: seat.col,
+        x: seat.x,
+        y: seat.y,
+        seatType: seat.seatType || 'regular'
+      }));
+    } else {
+      // Fallback to hardcoded pattern for backward compatibility
+      const frontRowIds = ['B1', 'B3', 'B5', 'B7', 'B9', 'B11', 'B13', 'B15', 'B17'];
+      const secondRowIds = ['B2', 'B4', 'B6', 'B8', 'B10', 'B12', 'B14', 'B16', 'B18'];
+      const thirdRowId = ['19'];
+      const fourthRowIds = ['A1', 'A3', 'A5', 'A7', 'A9', 'A11', 'A13', 'A15', 'A17'];
+      const fifthRowIds = ['A2', 'A4', 'A6', 'A8', 'A10', 'A12', 'A14', 'A16', 'A18'];
+      
+      const allSeatIds = [
+        ...frontRowIds,
+        ...secondRowIds,
+        ...thirdRowId,
+        ...fourthRowIds,
+        ...fifthRowIds
+      ];
+      
+      allSeats = allSeatIds.map((seatId, index) => ({
+        seatId,
+        label: seatId,
+        row: Math.floor(index / 5),
+        col: index % 5,
+        x: 0,
+        y: 0,
+        seatType: 'regular'
+      }));
+    }
 
     // Check for permanently booked seats
     try {
@@ -232,13 +261,37 @@ export const getBusSeatData = async (req, res) => {
       console.error('Error checking for permanently booked seats:', error);
     }
 
-    // Build the complete seat data structure
-    allSeatIds.forEach(seatId => {
-      const seatStatus = seatData.booked.includes(seatId) ? 'booked' : 'available';
+    // Build the complete seat data structure with dynamic layout
+    allSeats.forEach(seat => {
+      const seatId = seat.seatId || seat.label;
+      
+      // Determine seat status
+      let seatStatus = 'available';
+      
+      // Check if damaged
+      if (bus && bus.damagedSeats && bus.damagedSeats.includes(seatId)) {
+        seatStatus = 'damaged';
+      }
+      // Check if booked
+      else if (seatData.booked.includes(seatId)) {
+        seatStatus = 'booked';
+      }
+      
       busSeatData.push({
         id: seatId,
+        label: seat.label,
         status: seatStatus,
-        price: price
+        price: price,
+        row: seat.row,
+        col: seat.col,
+        x: seat.x,
+        y: seat.y,
+        seatType: seat.seatType,
+        layout: bus && bus.seatLayout ? {
+          rows: bus.seatLayout.rows,
+          cols: bus.seatLayout.cols,
+          layoutType: bus.seatLayout.layoutType
+        } : null
       });
     });
 
@@ -1040,4 +1093,3 @@ export const searchBuses = async (req, res) => {
 };
 
 
-// Get booking details by booking ID
