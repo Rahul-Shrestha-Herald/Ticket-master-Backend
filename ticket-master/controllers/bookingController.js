@@ -117,3 +117,5 @@ const verifyBookingForTracking = async (req, res) => {
 };
 
 export { verifyBookingForTracking }; 
+
+// Export the controller function

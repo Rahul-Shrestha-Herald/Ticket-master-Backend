@@ -1093,3 +1093,4 @@ export const searchBuses = async (req, res) => {
 };
 
 
+//hiexport const getBusImage = async (req, res) => {
