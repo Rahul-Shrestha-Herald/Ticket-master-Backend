@@ -1,4 +1,7 @@
 .env
 node_modules
 
+# Private key files (replace with your own; do not commit)
 sajiloticket-st-9f49f494e729.json
+ticketmaster-*.json
+*-credentials*.json

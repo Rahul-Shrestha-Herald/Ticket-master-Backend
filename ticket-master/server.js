@@ -33,6 +33,9 @@ import operatorKYCRouter from './routes/operator/kycRoutes.js';
 // Import payment routes
 import paymentRouter from './routes/paymentRoutes.js';
 
+// Import new Khalti payment routes
+import khaltiPaymentRouter from './routes/khaltiPaymentRoutes.js';
+
 // Import reservation routes
 import reservationRouter from './routes/reservationRoutes.js';
 
@@ -77,6 +80,9 @@ app.use('/api/operator/kyc', operatorKYCRouter);
 
 // Payment routes
 app.use('/api/payment', paymentRouter);
+
+// New Khalti payment routes
+app.use('/api/khalti', khaltiPaymentRouter);
 
 // Reservation routes
 app.use('/api/reservation', reservationRouter);

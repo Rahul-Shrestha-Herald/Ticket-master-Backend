@@ -921,7 +921,7 @@ export const BOOKING_CONFIRMATION_TEMPLATE = (bookingDetails) => `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Booking Confirmation - Sajilo Ticket</title>
+    <title>Booking Confirmation - Ticket Master</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -1015,7 +1015,7 @@ export const BOOKING_CONFIRMATION_TEMPLATE = (bookingDetails) => `
             
             <p>If you need to make any changes to your booking, please contact our support team.</p>
             
-            <p>Thank you for choosing Sajilo Ticket!</p>
+            <p>Thank you for choosing Ticket Master!</p>
         </div>
         
         <div class="footer">
