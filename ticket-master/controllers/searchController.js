@@ -109,7 +109,39 @@ export const getBusData = async (req, res) => {
     pipeline.push({ $limit: limit });
 
     const tickets = await Schedule.aggregate(pipeline);
-    res.json(tickets);
+    
+    // Post-process to calculate correct available seats based on actual bus layout
+    const processedTickets = tickets.map(ticket => {
+      // Get the actual number of seats from the bus layout
+      const totalSeats = ticket.bus?.seatLayout?.seats?.length || 37; // fallback to 37 for old buses
+      
+      // Get booked seats for this specific date
+      let bookedSeatsCount = 0;
+      if (ticket.seats?.dates && ticket.seats.dates[ticket.scheduleDateStr]) {
+        bookedSeatsCount = ticket.seats.dates[ticket.scheduleDateStr].booked?.length || 0;
+      } else if (ticket.seats?.global) {
+        bookedSeatsCount = ticket.seats.global.booked?.length || 0;
+      }
+      
+      // Calculate available seats
+      const availableSeatsCount = totalSeats - bookedSeatsCount;
+      
+      // Update the seats object to reflect correct available count
+      if (!ticket.seats) {
+        ticket.seats = { dates: {}, global: { available: [], booked: [] } };
+      }
+      
+      if (ticket.seats.dates && ticket.seats.dates[ticket.scheduleDateStr]) {
+        // Update available array length to match actual available seats
+        ticket.seats.dates[ticket.scheduleDateStr].available = Array(availableSeatsCount).fill(null).map((_, i) => `seat-${i}`);
+      } else if (ticket.seats.global) {
+        ticket.seats.global.available = Array(availableSeatsCount).fill(null).map((_, i) => `seat-${i}`);
+      }
+      
+      return ticket;
+    });
+
+    res.json(processedTickets);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -5,7 +5,10 @@ import 'dotenv/config';
 import cookieParser from "cookie-parser";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import connectDB from './config/mongodb.js';
+import { setupLocationSocket } from './socket/locationSocket.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,8 +45,25 @@ import reservationRouter from './routes/reservationRoutes.js';
 // Import support routes
 import supportRouter from './routes/supportRoutes.js';
 
+// Import location routes
+import locationRouter from './routes/locationRoutes.js';
+
 const app = express();
 const port = process.env.PORT || 4000;
+const httpServer = createServer(app);
+
+// Setup Socket.IO with CORS
+const io = new Server(httpServer, {
+    cors: {
+        origin: process.env.CLIENT_URL || 'http://localhost:5173',
+        methods: ['GET', 'POST'],
+        credentials: true
+    }
+});
+
+// Setup location tracking socket
+setupLocationSocket(io);
+
 connectDB();
 
 const allowedOrigins = [process.env.CLIENT_URL];
@@ -90,6 +110,9 @@ app.use('/api/reservation', reservationRouter);
 // Support routes
 app.use('/api/support', supportRouter);
 
+// Location tracking routes
+app.use('/api/location', locationRouter);
+
 // Global error handler middleware (must be last)
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
@@ -119,4 +142,4 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-app.listen(port, () => console.log(`Server started on PORT: ${port}`));
+httpServer.listen(port, () => console.log(`Server started on PORT: ${port}`));

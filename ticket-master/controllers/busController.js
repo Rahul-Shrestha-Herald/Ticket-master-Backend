@@ -1094,3 +1094,53 @@ export const searchBuses = async (req, res) => {
 
 
 //hiexport const getBusImage = async (req, res) => {
+
+
+// Get seat display data (labels) for selected seat IDs
+export const getSeatDisplayData = async (req, res) => {
+  try {
+    const { busId, seatIds } = req.query;
+
+    if (!busId || !seatIds) {
+      return res.status(400).json({ success: false, message: 'Bus ID and seat IDs are required' });
+    }
+
+    // Parse seat IDs from JSON string
+    const selectedSeatIds = JSON.parse(seatIds);
+
+    // Get bus with seat layout
+    const bus = await Bus.findById(busId).select('seatLayout');
+
+    if (!bus) {
+      return res.status(404).json({ success: false, message: 'Bus not found' });
+    }
+
+    let seatDisplayData = [];
+
+    // If bus has a configured layout, get labels from there
+    if (bus.seatLayout && bus.seatLayout.seats && bus.seatLayout.seats.length > 0) {
+      seatDisplayData = selectedSeatIds.map(seatId => {
+        const seat = bus.seatLayout.seats.find(s => s.seatId === seatId);
+        return seat ? seat.label : seatId;
+      });
+    } else {
+      // Fallback: use the seat IDs as labels (for old hardcoded layout)
+      seatDisplayData = selectedSeatIds;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        seatDisplayData
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching seat display data:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while fetching seat display data',
+      error: error.message
+    });
+  }
+};

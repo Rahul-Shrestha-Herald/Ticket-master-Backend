@@ -3,6 +3,7 @@ import {
     getBusDetails,
     imageProxy,
     getBusSeatData,
+    getSeatDisplayData,
     getRoutePoints,
     reserveSeatsTemporarily,
     checkReservationStatus,
@@ -20,6 +21,9 @@ router.get('/image-proxy', imageProxy);
 
 // GET /api/bus/seat-data?busId=123&date=2023-04-01 - get seat data for a bus on a specific date
 router.get('/seat-data', userAuth, getBusSeatData);
+
+// GET /api/bus/seat-display-data?busId=123&seatIds=["A1","B2"] - get seat labels for display
+router.get('/seat-display-data', userAuth, getSeatDisplayData);
 
 // GET /api/bus/route-points?busId=123&date=2023-04-01 - get pickup and drop points with times
 router.get('/route-points', userAuth, getRoutePoints);
