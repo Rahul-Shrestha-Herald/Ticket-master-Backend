@@ -1,11 +1,12 @@
 import express from 'express';
 import adminAuth from '../../middleware/admin/adminAuth.js';
-import { getAdminData, getUsers, getOperators, updateUserBlocked, updateOperatorStatus, getKYCSubmissions, getKYCDetails, approveKYC, rejectKYC } from '../../controllers/admin/adminController.js';
+import { getAdminData, getUsers, getOperators, updateUserBlocked, updateOperatorStatus, getKYCSubmissions, getKYCDetails, approveKYC, rejectKYC, uploadAdminProfilePicture } from '../../controllers/admin/adminController.js';
 import { getBuses, updateBusStatus, deleteBus } from '../../controllers/admin/busController.js';
 
 const router = express.Router();
 
 router.get('/data', adminAuth, getAdminData);
+router.post('/profile-picture', adminAuth, uploadAdminProfilePicture);
 router.get('/users', adminAuth, getUsers);
 router.get('/operators', adminAuth, getOperators);
 router.put('/users/:id/blocked', adminAuth, updateUserBlocked);

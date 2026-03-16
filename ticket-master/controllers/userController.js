@@ -25,6 +25,7 @@ export const getUserData = async (req, res) => {
             userData: {
                 name: user.name,
                 email: user.email,
+                profilePicture: user.profilePicture || '',
                 dateOfBirth: user.dateOfBirth,
                 permanentAddress: user.permanentAddress,
                 temporaryAddress: user.temporaryAddress,
@@ -79,6 +80,7 @@ export const updateUserProfile = async (req, res) => {
             userData: {
                 name: updatedUser.name,
                 email: updatedUser.email,
+                profilePicture: updatedUser.profilePicture || '',
                 dateOfBirth: updatedUser.dateOfBirth,
                 permanentAddress: updatedUser.permanentAddress,
                 temporaryAddress: updatedUser.temporaryAddress,
@@ -338,5 +340,42 @@ export const verifyPassword = async (req, res) => {
             message: 'Failed to verify password',
             error: error.message
         });
+    }
+};
+
+// Upload profile picture (accepts multipart/form-data with field "profilePicture")
+export const uploadProfilePicture = async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized. Please log in.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No image file provided' });
+        }
+
+        // Convert buffer to base64 data URL
+        const base64 = req.file.buffer.toString('base64');
+        const dataUrl = `data:${req.file.mimetype};base64,${base64}`;
+
+        const updatedUser = await userModel.findByIdAndUpdate(
+            userId,
+            { profilePicture: dataUrl },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Profile picture updated successfully',
+            profilePicture: dataUrl
+        });
+    } catch (error) {
+        console.error('Error uploading profile picture:', error);
+        return res.status(500).json({ success: false, message: 'Failed to upload profile picture' });
     }
 };

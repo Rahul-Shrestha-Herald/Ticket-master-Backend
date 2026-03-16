@@ -3,6 +3,17 @@ import User from "../../models/userModel.js";
 import Operator from "../../models/operator/operatorModel.js";
 import OperatorKYC from "../../models/operator/OperatorKYC.js";
 import transporter from '../../config/nodemailer.js';
+import multer from 'multer';
+
+const storage = multer.memoryStorage();
+const uploadMiddleware = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+}).single('profilePicture');
 
 // Get Admin Data
 export const getAdminData = async (req, res) => {
@@ -18,6 +29,7 @@ export const getAdminData = async (req, res) => {
       adminData: {
         name: admin.name,
         isAccountVerified: admin.isAccountVerified,
+        profilePicture: admin.profilePicture || '',
       },
     });
   } catch (error) {
@@ -288,5 +300,27 @@ const handleError = (res, error) => {
   res.status(500).json({
     success: false,
     message: 'Server error. Please try again later.'
+  });
+};
+
+// Upload Admin Profile Picture
+export const uploadAdminProfilePicture = async (req, res) => {
+  uploadMiddleware(req, res, async (err) => {
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+    try {
+      const base64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      const admin = await Admin.findByIdAndUpdate(
+        req.admin.id,
+        { profilePicture: base64 },
+        { new: true }
+      );
+      if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
+
+      res.status(200).json({ success: true, profilePicture: admin.profilePicture });
+    } catch (error) {
+      res.status(500).json({ success: false, message: 'Server error. Try again later.' });
+    }
   });
 };

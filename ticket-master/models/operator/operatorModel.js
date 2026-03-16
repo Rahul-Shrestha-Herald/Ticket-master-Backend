@@ -12,6 +12,7 @@ const operatorSchema = new mongoose.Schema({
   resetOtp: { type: String, default: '' },
   resetOtpExpireAt: { type: Number, default: 0 },
   isBlocked: { type: Boolean, default: false },
+  profilePicture: { type: String, default: '' },
 }, { timestamps: true });
 
 const Operator = mongoose.model('Operator', operatorSchema);

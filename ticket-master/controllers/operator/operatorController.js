@@ -3,6 +3,17 @@ import Bus from '../../models/operator/busModel.js';
 import BusRoute from '../../models/operator/busRouteModel.js';
 import BusSchedule from '../../models/operator/busScheduleModel.js';
 import bcrypt from 'bcryptjs';
+import multer from 'multer';
+
+const storage = multer.memoryStorage();
+export const uploadMiddleware = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+}).single('profilePicture');
 
 export const getOperatorData = async (req, res) => {
   try {
@@ -20,6 +31,7 @@ export const getOperatorData = async (req, res) => {
         contact: operator.contact,
         permanentAddress: operator.permanentAddress,
         isAccountVerified: operator.isAccountVerified,
+        profilePicture: operator.profilePicture || '',
       },
     });
   } catch (error) {
@@ -52,6 +64,7 @@ export const updateOperatorProfile = async (req, res) => {
         contact: operator.contact,
         permanentAddress: operator.permanentAddress,
         isAccountVerified: operator.isAccountVerified,
+        profilePicture: operator.profilePicture || '',
       },
     });
   } catch (error) {
@@ -259,4 +272,25 @@ export const deleteOperatorAccount = async (req, res) => {
       error: error.message
     });
   }
+};
+
+export const uploadOperatorProfilePicture = async (req, res) => {
+  uploadMiddleware(req, res, async (err) => {
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+    try {
+      const base64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      const operator = await Operator.findByIdAndUpdate(
+        req.operator.id,
+        { profilePicture: base64 },
+        { new: true }
+      );
+      if (!operator) return res.status(404).json({ success: false, message: 'Operator not found' });
+
+      res.status(200).json({ success: true, profilePicture: operator.profilePicture });
+    } catch (error) {
+      res.status(500).json({ success: false, message: 'Server error. Try again later.' });
+    }
+  });
 };

@@ -5,6 +5,9 @@ const userSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
 
+    // Profile picture (stored as base64 data URL)
+    profilePicture: { type: String, default: '' },
+
     // Additional user profile fields
     dateOfBirth: { type: Date },
     permanentAddress: { type: String },

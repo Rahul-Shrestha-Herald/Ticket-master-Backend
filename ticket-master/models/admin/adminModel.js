@@ -5,6 +5,7 @@ const adminSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   isAccountVerified: { type: Boolean, default: false },
+  profilePicture: { type: String, default: '' },
 }, { timestamps: true });
 
 const Admin = mongoose.model('Admin', adminSchema);

@@ -136,13 +136,28 @@ export const initiatePayment = async (req, res) => {
         // Convert amount to paisa (Khalti requires amount in paisa)
         const amountInPaisa = Math.round(amount * 100);
 
+        // Resolve seat labels from bus layout (fetch once, map all seats)
+        let seatLabelMap = {};
+        try {
+            const busForLabels = await Bus.findById(ticketInfo.busId).select('seatLayout');
+            if (busForLabels && busForLabels.seatLayout && busForLabels.seatLayout.seats) {
+                busForLabels.seatLayout.seats.forEach(s => {
+                    seatLabelMap[s.seatId] = s.label || s.seatId;
+                });
+            }
+        } catch (labelErr) {
+            console.error('Error fetching seat labels for Khalti payload:', labelErr);
+        }
+
+        const pricePerSeat = Math.round(amountInPaisa / ticketInfo.selectedSeats.length);
+
         // Prepare Khalti payment request
         const khaltiPayload = {
             return_url: `${CLIENT_URL}/bus-tickets/payment-callback`,
             website_url: CLIENT_URL,
             amount: amountInPaisa,
             purchase_order_id,
-            purchase_order_name: `Ticket for ${ticketInfo.fromLocation} to ${ticketInfo.toLocation}`,
+            purchase_order_name: `Ticket Master - ${ticketInfo.fromLocation} to ${ticketInfo.toLocation}`,
             customer_info: {
                 name: passengerInfo.name,
                 email: passengerInfo.email,
@@ -154,13 +169,16 @@ export const initiatePayment = async (req, res) => {
                     amount: amountInPaisa
                 }
             ],
-            product_details: ticketInfo.selectedSeats.map((seat) => ({
-                identity: `SEAT-${seat}`,
-                name: `Seat ${seat}`,
-                total_price: amountInPaisa / ticketInfo.selectedSeats.length,
-                quantity: 1,
-                unit_price: amountInPaisa / ticketInfo.selectedSeats.length
-            }))
+            product_details: ticketInfo.selectedSeats.map((seatId) => {
+                const label = seatLabelMap[seatId] || seatId;
+                return {
+                    identity: `SEAT-${label}`,
+                    name: `Seat ${label}`,
+                    total_price: pricePerSeat,
+                    quantity: 1,
+                    unit_price: pricePerSeat
+                };
+            })
         };
 
         console.log('Making request to Khalti API');
