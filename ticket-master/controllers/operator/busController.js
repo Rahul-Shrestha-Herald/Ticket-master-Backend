@@ -70,7 +70,7 @@ const uploadFileToDrive = async (file, folderId, operatorEmail, isPublic = false
 export const addBus = async (req, res) => {
     try {
         // Extract fields from req.body
-        const { busName, busNumber, primaryContactNumber, secondaryContactNumber, busDescription, reservationPolicies, amenities } = req.body;
+        const { busName, busNumber, primaryContactNumber, secondaryContactNumber, driverName, driverContactNumber, busDescription, reservationPolicies, amenities } = req.body;
 
         // Validate required text fields
         if (!busName || !busNumber) {
@@ -203,6 +203,8 @@ export const addBus = async (req, res) => {
             busNumber,
             primaryContactNumber,
             secondaryContactNumber,
+            driverName: driverName || '',
+            driverContactNumber: driverContactNumber || '',
             busDescription,
             documents: {
                 bluebook: bluebookUrl,
@@ -264,7 +266,7 @@ export const updateBus = async (req, res) => {
         }
 
         // Update allowed fields
-        const { busDescription, primaryContactNumber, secondaryContactNumber, reservationPolicies, amenities, images, documents, seatLayout } = req.body;
+        const { busDescription, primaryContactNumber, secondaryContactNumber, driverName, driverContactNumber, reservationPolicies, amenities, images, documents, seatLayout } = req.body;
 
         if (busDescription !== undefined) bus.busDescription = busDescription;
         if (primaryContactNumber !== undefined) {
@@ -277,6 +279,8 @@ export const updateBus = async (req, res) => {
             bus.primaryContactNumber = primaryContactNumber;
         }
         if (secondaryContactNumber !== undefined) bus.secondaryContactNumber = secondaryContactNumber;
+        if (driverName !== undefined) bus.driverName = driverName;
+        if (driverContactNumber !== undefined) bus.driverContactNumber = driverContactNumber;
         if (reservationPolicies !== undefined) bus.reservationPolicies = reservationPolicies;
         if (amenities !== undefined) bus.amenities = amenities;
         if (images !== undefined) bus.images = images;

@@ -30,7 +30,8 @@ export const getUserData = async (req, res) => {
                 permanentAddress: user.permanentAddress,
                 temporaryAddress: user.temporaryAddress,
                 contactNumber: user.contactNumber,
-                isAccountVerified: user.isAccountVerified
+                isAccountVerified: user.isAccountVerified,
+                tmPoints: user.tmPoints || 0
             }
         });
 

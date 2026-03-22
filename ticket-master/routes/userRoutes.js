@@ -2,6 +2,7 @@ import express from 'express'
 import multer from 'multer';
 import userAuth from '../middleware/userAuth.js';
 import { getUserData, getUserBookings, updateUserProfile, deleteUserAccount, changePassword, verifyPassword, uploadProfilePicture } from '../controllers/userController.js';
+import { getTMPoints, validateRedemption } from '../controllers/tmPointsController.js';
 
 const userRouter = express.Router();
 
@@ -22,5 +23,9 @@ userRouter.post('/profile-picture', userAuth, upload.single('profilePicture'), u
 userRouter.delete('/account', userAuth, deleteUserAccount);
 userRouter.put('/change-password', userAuth, changePassword);
 userRouter.post('/verify-password', userAuth, verifyPassword);
+
+// TM Points routes
+userRouter.get('/tm-points', userAuth, getTMPoints);
+userRouter.post('/tm-points/validate', userAuth, validateRedemption);
 
 export default userRouter;

@@ -38,6 +38,8 @@ const busSchema = new mongoose.Schema({
   busNumber: { type: String, required: true },
   primaryContactNumber: { type: String, required: true },
   secondaryContactNumber: { type: String },
+  driverName: { type: String },
+  driverContactNumber: { type: String },
   busDescription: { type: String },
   documents: {
     bluebook: { type: String },

@@ -49,6 +49,14 @@ const ticketSchema = new mongoose.Schema(
             type: Number,
             required: true
         },
+        pointsToRedeem: {
+            type: Number,
+            default: 0
+        },
+        pointsEarned: {
+            type: Number,
+            default: 0
+        },
         status: {
             type: String,
             enum: ['pending', 'confirmed', 'canceled'],

@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import transporter from '../config/nodemailer.js';
 import { BOOKING_CONFIRMATION_TEMPLATE } from '../config/emailTemplates.js';
+import { generateTicketPDF } from '../services/pdfTicketService.js';
+import { awardPoints, redeemPoints, calculateRedemption } from './tmPointsController.js';
 dotenv.config();
 
 // Import models - we'll need to create these
@@ -33,7 +35,8 @@ export const initiatePayment = async (req, res) => {
             passengerInfo,
             ticketInfo,
             pickupPointId,
-            dropPointId
+            dropPointId,
+            pointsToRedeem
         } = req.body;
 
         // Validate required fields
@@ -54,6 +57,23 @@ export const initiatePayment = async (req, res) => {
         // Log validation success
         console.log('Validation passed, checking for existing ticket');
 
+        // Resolve seat labels from bus layout upfront (used for both new and existing tickets)
+        let seatLabelMap = {};
+        try {
+            const busForLabels = await Bus.findById(ticketInfo.busId).select('seatLayout');
+            if (busForLabels && busForLabels.seatLayout && busForLabels.seatLayout.seats) {
+                busForLabels.seatLayout.seats.forEach(s => {
+                    seatLabelMap[s.seatId] = s.label || s.seatId;
+                });
+            }
+        } catch (labelErr) {
+            console.error('Error fetching seat labels:', labelErr);
+        }
+
+        // Resolve selected seat IDs to human-readable labels for storage
+        const resolvedSeatLabels = ticketInfo.selectedSeats.map(id => seatLabelMap[id] || id);
+        const ticketInfoWithLabels = { ...ticketInfo, selectedSeats: resolvedSeatLabels };
+
         // Check if a ticket with this reservationId already exists
         let ticket = await Ticket.findOne({ reservationId });
         let bookingId;
@@ -62,6 +82,15 @@ export const initiatePayment = async (req, res) => {
         if (ticket) {
             console.log(`Found existing ticket with ID: ${ticket._id} and booking ID: ${ticket.bookingId}`);
             bookingId = ticket.bookingId;
+
+            // Update selectedSeats with resolved labels if not already resolved
+            if (ticket.ticketInfo && ticket.ticketInfo.selectedSeats) {
+                const hasRawIds = ticket.ticketInfo.selectedSeats.some(s => s.startsWith('SEAT_'));
+                if (hasRawIds && Object.keys(seatLabelMap).length > 0) {
+                    ticket.ticketInfo.selectedSeats = ticket.ticketInfo.selectedSeats.map(id => seatLabelMap[id] || id);
+                    await ticket.save();
+                }
+            }
 
             // Check if there's an existing payment for this ticket
             const existingPayment = await Payment.findOne({ ticketId: ticket._id });
@@ -122,10 +151,11 @@ export const initiatePayment = async (req, res) => {
                 bookingId,
                 reservationId,
                 passengerInfo,
-                ticketInfo,
+                ticketInfo: ticketInfoWithLabels,
                 price: amount,
                 pickupPointId,
-                dropPointId
+                dropPointId,
+                pointsToRedeem: pointsToRedeem || 0
             });
 
             // Save the ticket
@@ -135,19 +165,6 @@ export const initiatePayment = async (req, res) => {
 
         // Convert amount to paisa (Khalti requires amount in paisa)
         const amountInPaisa = Math.round(amount * 100);
-
-        // Resolve seat labels from bus layout (fetch once, map all seats)
-        let seatLabelMap = {};
-        try {
-            const busForLabels = await Bus.findById(ticketInfo.busId).select('seatLayout');
-            if (busForLabels && busForLabels.seatLayout && busForLabels.seatLayout.seats) {
-                busForLabels.seatLayout.seats.forEach(s => {
-                    seatLabelMap[s.seatId] = s.label || s.seatId;
-                });
-            }
-        } catch (labelErr) {
-            console.error('Error fetching seat labels for Khalti payload:', labelErr);
-        }
 
         const pricePerSeat = Math.round(amountInPaisa / ticketInfo.selectedSeats.length);
 
@@ -169,16 +186,13 @@ export const initiatePayment = async (req, res) => {
                     amount: amountInPaisa
                 }
             ],
-            product_details: ticketInfo.selectedSeats.map((seatId) => {
-                const label = seatLabelMap[seatId] || seatId;
-                return {
-                    identity: `SEAT-${label}`,
-                    name: `Seat ${label}`,
-                    total_price: pricePerSeat,
-                    quantity: 1,
-                    unit_price: pricePerSeat
-                };
-            })
+            product_details: resolvedSeatLabels.map((label, i) => ({
+                identity: `SEAT-${ticketInfo.selectedSeats[i] || label}`,
+                name: `Seat ${label}`,
+                total_price: pricePerSeat,
+                quantity: 1,
+                unit_price: pricePerSeat
+            }))
         };
 
         console.log('Making request to Khalti API');
@@ -625,6 +639,26 @@ export const verifyPayment = async (req, res) => {
         console.log(`Storing operator contact info for ticket ${ticket._id}, busId ${ticket.ticketInfo.busId || ticket.busId}`);
         const contactInfo = await storeOperatorContactInfo(ticket._id, ticket.ticketInfo.busId || ticket.busId);
 
+        // Resolve seat IDs → labels and fetch driver info
+        let resolvedSeats = ticket.ticketInfo.selectedSeats;
+        let driverName = null;
+        let driverContactNumber = null;
+        try {
+            const busForSeats = await Bus.findById(ticket.ticketInfo.busId || ticket.busId)
+                .select('seatLayout driverName driverContactNumber');
+            if (busForSeats) {
+                driverName = busForSeats.driverName || null;
+                driverContactNumber = busForSeats.driverContactNumber || null;
+                if (busForSeats.seatLayout && busForSeats.seatLayout.seats) {
+                    const labelMap = {};
+                    busForSeats.seatLayout.seats.forEach(s => { labelMap[s.seatId] = s.label || s.seatId; });
+                    resolvedSeats = ticket.ticketInfo.selectedSeats.map(id => labelMap[id] || id);
+                }
+            }
+        } catch (seatErr) {
+            console.error('Error resolving seat labels in verifyPayment:', seatErr);
+        }
+
         // Generate invoice data based on ticket details
         const invoiceData = {
             ticketId: ticket._id,
@@ -644,7 +678,7 @@ export const verifyPayment = async (req, res) => {
             journeyDate: ticket.ticketInfo.journeyDate || ticket.ticketInfo.date,
             departureTime: ticket.ticketInfo.departureTime,
             arrivalTime: ticket.ticketInfo.arrivalTime,
-            selectedSeats: ticket.ticketInfo.selectedSeats,
+            selectedSeats: resolvedSeats,
             totalPrice: ticket.price,
             pricePerSeat: ticket.price / ticket.ticketInfo.selectedSeats.length,
             paymentMethod: payment.paymentMethod,
@@ -655,7 +689,9 @@ export const verifyPayment = async (req, res) => {
             secondaryContactNumber: contactInfo.secondaryContactNumber,
             contactPhone: contactInfo.primaryContactNumber
                 ? (contactInfo.secondaryContactNumber ? `${contactInfo.primaryContactNumber}, ${contactInfo.secondaryContactNumber}` : contactInfo.primaryContactNumber)
-                : null
+                : null,
+            driverName,
+            driverContactNumber
         };
 
         // Find the operator - more comprehensive approach
@@ -839,6 +875,40 @@ export const verifyPayment = async (req, res) => {
             user = await User.findById(ticket.userId);
         }
 
+        // Award TM Points for this payment (5% of ticket price)
+        // Guard with isFirstVerification to prevent double-processing on repeated verify calls
+        if (ticket.userId && response.data.status === 'Completed' && isFirstVerification) {
+            try {
+                // Handle redemption if points were used (only once)
+                if (ticket.pointsToRedeem && ticket.pointsToRedeem > 0) {
+                    await redeemPoints({
+                        userId: ticket.userId,
+                        ticketId: ticket._id,
+                        bookingId: ticket.bookingId,
+                        pointsUsed: ticket.pointsToRedeem,
+                        discountAmount: (ticket.pointsToRedeem / 100) * 10
+                    });
+                }
+
+                // Award points on the actual amount paid (only once)
+                const earnResult = await awardPoints({
+                    userId: ticket.userId,
+                    ticketId: ticket._id,
+                    bookingId: ticket.bookingId,
+                    amountPaid: ticket.price
+                });
+
+                if (earnResult.success && earnResult.pointsEarned > 0) {
+                    ticket.pointsEarned = earnResult.pointsEarned;
+                    await ticket.save();
+                    console.log(`Awarded ${earnResult.pointsEarned} TM Points to user ${ticket.userId}`);
+                }
+            } catch (pointsError) {
+                console.error('Error processing TM Points:', pointsError);
+                // Non-fatal — continue with payment success
+            }
+        }
+
         // Send booking confirmation emails
         await sendBookingConfirmationEmails(ticket, payment, operator, user);
 
@@ -848,6 +918,7 @@ export const verifyPayment = async (req, res) => {
             message: 'Payment verification successful',
             ticketId: ticket._id,
             bookingId: ticket.bookingId,
+            pointsEarned: ticket.pointsEarned || 0,
             invoiceData
         });
     } catch (error) {
@@ -1188,6 +1259,27 @@ export const getInvoice = async (req, res) => {
         const totalSeats = ticket.ticketInfo.selectedSeats.length;
         const pricePerSeat = totalSeats > 0 ? Math.round(ticket.price / totalSeats) : 0;
 
+        // Resolve seat IDs → human-readable labels from bus seatLayout
+        let resolvedSeats = ticket.ticketInfo.selectedSeats;
+        let driverName = null;
+        let driverContactNumber = null;
+        try {
+            const Bus = mongoose.model('Bus');
+            const busForSeats = await Bus.findById(ticket.ticketInfo.busId || ticket.busId)
+                .select('seatLayout driverName driverContactNumber');
+            if (busForSeats) {
+                driverName = busForSeats.driverName || null;
+                driverContactNumber = busForSeats.driverContactNumber || null;
+                if (busForSeats.seatLayout && busForSeats.seatLayout.seats) {
+                    const labelMap = {};
+                    busForSeats.seatLayout.seats.forEach(s => { labelMap[s.seatId] = s.label || s.seatId; });
+                    resolvedSeats = ticket.ticketInfo.selectedSeats.map(id => labelMap[id] || id);
+                }
+            }
+        } catch (seatErr) {
+            console.error('Error resolving seat labels in getInvoice:', seatErr);
+        }
+
         // Create invoice data with all necessary information
         const invoiceData = {
             ticketId: ticket._id,
@@ -1207,7 +1299,7 @@ export const getInvoice = async (req, res) => {
             journeyDate: ticket.ticketInfo.journeyDate || ticket.ticketInfo.date,
             departureTime: ticket.ticketInfo.departureTime,
             arrivalTime: ticket.ticketInfo.arrivalTime,
-            selectedSeats: ticket.ticketInfo.selectedSeats,
+            selectedSeats: resolvedSeats,
             totalPrice: ticket.price,
             pricePerSeat: pricePerSeat,
             paymentMethod: payment.paymentMethod,
@@ -1216,7 +1308,9 @@ export const getInvoice = async (req, res) => {
             qrCodeData: `${process.env.CLIENT_URL}/verify-ticket/${ticket._id}`,
             primaryContactNumber,
             secondaryContactNumber,
-            contactPhone
+            contactPhone,
+            driverName,
+            driverContactNumber
         };
 
         return res.status(200).json({
@@ -1884,18 +1978,31 @@ const sendBookingConfirmationEmails = async (ticket, payment, operator, user = n
             const userEmail = user?.email;
             const passengerEmail = ticket.passengerInfo?.email;
 
+            // Generate PDF ticket once for attachment
+            let pdfAttachment = [];
+            try {
+                const pdfBuffer = await generateTicketPDF(ticket, payment);
+                pdfAttachment = [{
+                    filename: `ticket-${ticket.bookingId}.pdf`,
+                    content: pdfBuffer,
+                    contentType: 'application/pdf'
+                }];
+                console.log('PDF ticket generated successfully');
+            } catch (pdfError) {
+                console.error('Failed to generate PDF ticket:', pdfError);
+            }
+
             // Handle passenger email
             if (passengerEmail) {
                 console.log(`Sending email to passenger: ${passengerEmail}`);
-                const passengerMailOptions = {
-                    from: process.env.SENDER_EMAIL,
-                    to: passengerEmail,
-                    subject: `Your Booking Confirmation - ${ticket.bookingId}`,
-                    html: htmlContent
-                };
-
                 try {
-                    await transporter.sendMail(passengerMailOptions);
+                    await transporter.sendMail({
+                        from: process.env.SENDER_EMAIL,
+                        to: passengerEmail,
+                        subject: `Your Booking Confirmation - ${ticket.bookingId}`,
+                        html: htmlContent,
+                        attachments: pdfAttachment
+                    });
                     console.log(`Booking confirmation email sent to passenger: ${passengerEmail}`);
                     sentEmails.push(`passenger:${passengerEmail}`);
                 } catch (error) {
@@ -1906,15 +2013,14 @@ const sendBookingConfirmationEmails = async (ticket, payment, operator, user = n
             // Handle user email only if different from passenger email
             if (userEmail && userEmail !== passengerEmail) {
                 console.log(`Sending email to logged-in user: ${userEmail}`);
-                const userMailOptions = {
-                    from: process.env.SENDER_EMAIL,
-                    to: userEmail,
-                    subject: `Your Booking Confirmation - ${ticket.bookingId}`,
-                    html: htmlContent
-                };
-
                 try {
-                    await transporter.sendMail(userMailOptions);
+                    await transporter.sendMail({
+                        from: process.env.SENDER_EMAIL,
+                        to: userEmail,
+                        subject: `Your Booking Confirmation - ${ticket.bookingId}`,
+                        html: htmlContent,
+                        attachments: pdfAttachment
+                    });
                     console.log(`Booking confirmation email sent to user: ${userEmail}`);
                     sentEmails.push(`user:${userEmail}`);
                 } catch (error) {

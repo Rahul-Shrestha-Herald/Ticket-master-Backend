@@ -14,6 +14,9 @@ const userSchema = new mongoose.Schema({
     temporaryAddress: { type: String },
     contactNumber: { type: String },
 
+    // TM Points (reward points)
+    tmPoints: { type: Number, default: 0, min: 0 },
+
     isAccountVerified: { type: Boolean, default: false },
     resetOtp: { type: String, default: '' },
     resetOtpExpireAt: { type: Number, default: 0 },
