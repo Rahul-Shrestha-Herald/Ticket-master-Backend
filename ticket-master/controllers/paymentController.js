@@ -6,6 +6,7 @@ import transporter from '../config/nodemailer.js';
 import { BOOKING_CONFIRMATION_TEMPLATE } from '../config/emailTemplates.js';
 import { generateTicketPDF } from '../services/pdfTicketService.js';
 import { awardPoints, redeemPoints, calculateRedemption } from './tmPointsController.js';
+import { createNotification } from './notificationController.js';
 dotenv.config();
 
 // Import models - we'll need to create these
@@ -691,7 +692,10 @@ export const verifyPayment = async (req, res) => {
                 ? (contactInfo.secondaryContactNumber ? `${contactInfo.primaryContactNumber}, ${contactInfo.secondaryContactNumber}` : contactInfo.primaryContactNumber)
                 : null,
             driverName,
-            driverContactNumber
+            driverContactNumber,
+            pointsToRedeem: ticket.pointsToRedeem || 0,
+            pointsDiscount: ticket.pointsToRedeem ? (ticket.pointsToRedeem / 100) * 10 : 0,
+            pointsEarned: ticket.pointsEarned || 0
         };
 
         // Find the operator - more comprehensive approach
@@ -902,7 +906,37 @@ export const verifyPayment = async (req, res) => {
                     ticket.pointsEarned = earnResult.pointsEarned;
                     await ticket.save();
                     console.log(`Awarded ${earnResult.pointsEarned} TM Points to user ${ticket.userId}`);
+
+                    // Notify: points earned
+                    await createNotification({
+                        userId: ticket.userId,
+                        type: 'points',
+                        title: 'TM Points Earned!',
+                        message: `You earned ${earnResult.pointsEarned} TM Points for booking ${ticket.bookingId}.`,
+                        link: '/tm-points',
+                        meta: { bookingId: ticket.bookingId, points: earnResult.pointsEarned }
+                    });
                 }
+
+                // Notify: booking confirmed
+                await createNotification({
+                    userId: ticket.userId,
+                    type: 'booking',
+                    title: 'Booking Confirmed',
+                    message: `Your booking ${ticket.bookingId} from ${ticket.ticketInfo.fromLocation} to ${ticket.ticketInfo.toLocation} is confirmed.`,
+                    link: '/bookings',
+                    meta: { bookingId: ticket.bookingId }
+                });
+
+                // Notify: payment success
+                await createNotification({
+                    userId: ticket.userId,
+                    type: 'payment',
+                    title: 'Payment Successful',
+                    message: `Payment of NPR ${ticket.price} for booking ${ticket.bookingId} was successful.`,
+                    link: '/bookings',
+                    meta: { bookingId: ticket.bookingId, amount: ticket.price }
+                });
             } catch (pointsError) {
                 console.error('Error processing TM Points:', pointsError);
                 // Non-fatal — continue with payment success
@@ -1310,7 +1344,10 @@ export const getInvoice = async (req, res) => {
             secondaryContactNumber,
             contactPhone,
             driverName,
-            driverContactNumber
+            driverContactNumber,
+            pointsToRedeem: ticket.pointsToRedeem || 0,
+            pointsDiscount: ticket.pointsToRedeem ? (ticket.pointsToRedeem / 100) * 10 : 0,
+            pointsEarned: ticket.pointsEarned || 0
         };
 
         return res.status(200).json({

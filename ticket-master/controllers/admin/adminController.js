@@ -310,15 +310,18 @@ export const uploadAdminProfilePicture = async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
     try {
-      const base64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      const { uploadToDrive } = await import('../../services/driveService.js');
+      const driveUrl = await uploadToDrive(req.file, process.env.GOOGLE_DRIVE_PROFILE_FOLDER_ID);
+      if (!driveUrl) return res.status(500).json({ success: false, message: 'Failed to upload to Drive' });
+
       const admin = await Admin.findByIdAndUpdate(
         req.admin.id,
-        { profilePicture: base64 },
+        { profilePicture: driveUrl },
         { new: true }
       );
       if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
 
-      res.status(200).json({ success: true, profilePicture: admin.profilePicture });
+      res.status(200).json({ success: true, profilePicture: driveUrl });
     } catch (error) {
       res.status(500).json({ success: false, message: 'Server error. Try again later.' });
     }

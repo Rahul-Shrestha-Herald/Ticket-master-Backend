@@ -3,6 +3,10 @@ import multer from 'multer';
 import userAuth from '../middleware/userAuth.js';
 import { getUserData, getUserBookings, updateUserProfile, deleteUserAccount, changePassword, verifyPassword, uploadProfilePicture } from '../controllers/userController.js';
 import { getTMPoints, validateRedemption } from '../controllers/tmPointsController.js';
+import {
+    getNotifications, markRead, markAllRead,
+    deleteNotification, clearAll
+} from '../controllers/notificationController.js';
 
 const userRouter = express.Router();
 
@@ -27,5 +31,12 @@ userRouter.post('/verify-password', userAuth, verifyPassword);
 // TM Points routes
 userRouter.get('/tm-points', userAuth, getTMPoints);
 userRouter.post('/tm-points/validate', userAuth, validateRedemption);
+
+// Notification routes
+userRouter.get('/notifications', userAuth, getNotifications);
+userRouter.patch('/notifications/read-all', userAuth, markAllRead);
+userRouter.delete('/notifications', userAuth, clearAll);
+userRouter.patch('/notifications/:id/read', userAuth, markRead);
+userRouter.delete('/notifications/:id', userAuth, deleteNotification);
 
 export default userRouter;

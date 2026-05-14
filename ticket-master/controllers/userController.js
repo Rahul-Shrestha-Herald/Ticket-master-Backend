@@ -356,13 +356,18 @@ export const uploadProfilePicture = async (req, res) => {
             return res.status(400).json({ success: false, message: 'No image file provided' });
         }
 
-        // Convert buffer to base64 data URL
-        const base64 = req.file.buffer.toString('base64');
-        const dataUrl = `data:${req.file.mimetype};base64,${base64}`;
+        // Upload to Google Drive
+        const { uploadToDrive } = await import('../services/driveService.js');
+        const folderId = process.env.GOOGLE_DRIVE_PROFILE_FOLDER_ID;
+        const driveUrl = await uploadToDrive(req.file, folderId);
+
+        if (!driveUrl) {
+            return res.status(500).json({ success: false, message: 'Failed to upload image to Drive' });
+        }
 
         const updatedUser = await userModel.findByIdAndUpdate(
             userId,
-            { profilePicture: dataUrl },
+            { profilePicture: driveUrl },
             { new: true }
         );
 
@@ -373,7 +378,7 @@ export const uploadProfilePicture = async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Profile picture updated successfully',
-            profilePicture: dataUrl
+            profilePicture: driveUrl
         });
     } catch (error) {
         console.error('Error uploading profile picture:', error);

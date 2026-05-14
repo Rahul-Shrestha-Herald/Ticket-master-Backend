@@ -29,40 +29,43 @@ const uploadFileToDrive = async (file, folderId, operatorEmail, isPublic = false
             requestBody: fileMetadata,
             media: media,
             fields: 'id',
+            supportsAllDrives: true,
         });
 
         const fileId = response.data.id;
         if (!fileId) {
+            console.error('Drive upload: no fileId returned');
             return null;
         }
 
-        // Set permissions based on isPublic flag
-        if (isPublic) {
-            // Public read access for anyone
-            await driveService.permissions.create({
-                fileId: fileId,
-                requestBody: {
-                    role: 'reader',
-                    type: 'anyone',
-                },
-            });
-        } else {
-            // Private access for the operator's email
-            if (!operatorEmail) {
-                return null;
-            }
-            await driveService.permissions.create({
-                fileId: fileId,
-                requestBody: {
-                    role: 'reader',
-                    type: 'user',
-                    emailAddress: operatorEmail,
-                },
-            });
+        // Always make public so images load without auth
+        await driveService.permissions.create({
+            fileId: fileId,
+            supportsAllDrives: true,
+            requestBody: {
+                role: 'reader',
+                type: 'anyone',
+            },
+        });
+
+        // Also share with operator email if provided (for documents)
+        if (!isPublic && operatorEmail) {
+            try {
+                await driveService.permissions.create({
+                    fileId: fileId,
+                    supportsAllDrives: true,
+                    requestBody: {
+                        role: 'reader',
+                        type: 'user',
+                        emailAddress: operatorEmail,
+                    },
+                });
+            } catch (_) {}
         }
 
-        return `https://drive.google.com/uc?export=view&id=${fileId}`;
+        return `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
     } catch (error) {
+        console.error('Drive upload error:', error.message);
         return null;
     }
 };
