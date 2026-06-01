@@ -1,73 +1,9 @@
 import Bus from '../../models/operator/busModel.js';
-import { google } from 'googleapis';
-import { Readable } from 'stream';
 
-// Helper function: uploads a file (from memory) to Google Drive and returns the URL.
-const uploadFileToDrive = async (file, folderId, operatorEmail, isPublic = false) => {
-    try {
-        const auth = new google.auth.GoogleAuth({
-            keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-            scopes: ['https://www.googleapis.com/auth/drive'],
-        });
-        const driveService = google.drive({ version: 'v3', auth });
-
-        const fileMetadata = {
-            name: file.originalname,
-            parents: [folderId || ''],
-        };
-
-        const bufferStream = new Readable();
-        bufferStream.push(file.buffer);
-        bufferStream.push(null);
-
-        const media = {
-            mimeType: file.mimetype,
-            body: bufferStream,
-        };
-
-        const response = await driveService.files.create({
-            requestBody: fileMetadata,
-            media: media,
-            fields: 'id',
-            supportsAllDrives: true,
-        });
-
-        const fileId = response.data.id;
-        if (!fileId) {
-            console.error('Drive upload: no fileId returned');
-            return null;
-        }
-
-        // Always make public so images load without auth
-        await driveService.permissions.create({
-            fileId: fileId,
-            supportsAllDrives: true,
-            requestBody: {
-                role: 'reader',
-                type: 'anyone',
-            },
-        });
-
-        // Also share with operator email if provided (for documents)
-        if (!isPublic && operatorEmail) {
-            try {
-                await driveService.permissions.create({
-                    fileId: fileId,
-                    supportsAllDrives: true,
-                    requestBody: {
-                        role: 'reader',
-                        type: 'user',
-                        emailAddress: operatorEmail,
-                    },
-                });
-            } catch (_) {}
-        }
-
-        return `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
-    } catch (error) {
-        console.error('Drive upload error:', error.message);
-        return null;
-    }
+// Helper function: converts a multer file buffer to a base64 data URL.
+const fileToBase64 = (file) => {
+    if (!file) return '';
+    return `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
 };
 
 export const addBus = async (req, res) => {
@@ -131,9 +67,9 @@ export const addBus = async (req, res) => {
         }
 
         // Folder ID for bus-related files (documents and images)
-        const folderId = process.env.GOOGLE_DRIVE_BUS_FOLDER_ID || '';
+        // const folderId = process.env.GOOGLE_DRIVE_BUS_FOLDER_ID || '';
 
-        // Upload files if provided
+        // Convert files to base64 data URLs for storage in MongoDB
         let bluebookUrl = '';
         let roadPermitUrl = '';
         let insuranceUrl = '';
@@ -142,29 +78,26 @@ export const addBus = async (req, res) => {
         let leftImageUrl = '';
         let rightImageUrl = '';
 
-        // Upload documents with operator access
         if (req.files.bluebook && req.files.bluebook[0]) {
-            bluebookUrl = await uploadFileToDrive(req.files.bluebook[0], folderId, req.operator.email);
+            bluebookUrl = fileToBase64(req.files.bluebook[0]);
         }
         if (req.files.roadPermit && req.files.roadPermit[0]) {
-            roadPermitUrl = await uploadFileToDrive(req.files.roadPermit[0], folderId, req.operator.email);
+            roadPermitUrl = fileToBase64(req.files.roadPermit[0]);
         }
         if (req.files.insurance && req.files.insurance[0]) {
-            insuranceUrl = await uploadFileToDrive(req.files.insurance[0], folderId, req.operator.email);
+            insuranceUrl = fileToBase64(req.files.insurance[0]);
         }
-
-        // Upload bus images with public access
         if (req.files.busImageFront && req.files.busImageFront[0]) {
-            frontImageUrl = await uploadFileToDrive(req.files.busImageFront[0], folderId, req.operator.email, true);
+            frontImageUrl = fileToBase64(req.files.busImageFront[0]);
         }
         if (req.files.busImageBack && req.files.busImageBack[0]) {
-            backImageUrl = await uploadFileToDrive(req.files.busImageBack[0], folderId, req.operator.email, true);
+            backImageUrl = fileToBase64(req.files.busImageBack[0]);
         }
         if (req.files.busImageLeft && req.files.busImageLeft[0]) {
-            leftImageUrl = await uploadFileToDrive(req.files.busImageLeft[0], folderId, req.operator.email, true);
+            leftImageUrl = fileToBase64(req.files.busImageLeft[0]);
         }
         if (req.files.busImageRight && req.files.busImageRight[0]) {
-            rightImageUrl = await uploadFileToDrive(req.files.busImageRight[0], folderId, req.operator.email, true);
+            rightImageUrl = fileToBase64(req.files.busImageRight[0]);
         }
 
         // Parse seat layout if provided
@@ -342,20 +275,9 @@ export const uploadFile = async (req, res) => {
             return res.status(400).json({ success: false, message: "No file provided." });
         }
 
-        const folderId = process.env.GOOGLE_DRIVE_BUS_FOLDER_ID || '';
-
-        // Check if this is a bus image or a document based on the type field
-        const fileType = req.body.type;
-
-        // If it's a bus image (front, back, left, right), set isPublic to true
-        const isPublic = ['front', 'back', 'left', 'right'].includes(fileType);
-
-        const driveUrl = await uploadFileToDrive(req.file, folderId, req.operator.email, isPublic);
-
-        if (!driveUrl) {
-            return res.status(500).json({ success: false, message: "Failed to upload file to Drive." });
-        }
-        res.json({ success: true, driveUrl });
+        // Convert to base64 data URL
+        const dataUrl = fileToBase64(req.file);
+        res.json({ success: true, driveUrl: dataUrl });
     } catch (error) {
         res.status(500).json({ success: false, message: "Server error. Try again later." });
     }

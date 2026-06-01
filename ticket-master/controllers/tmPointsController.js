@@ -54,11 +54,10 @@ export const awardPoints = async ({ userId, ticketId, bookingId, amountPaid }) =
 export const calculateRedemption = (pointsToRedeem, userBalance) => {
     if (!pointsToRedeem || pointsToRedeem <= 0) return { valid: false, discount: 0 };
     if (pointsToRedeem > userBalance) return { valid: false, discount: 0, message: 'Insufficient TM Points' };
-    // Must redeem in multiples of 100
-    const redeemable = Math.floor(pointsToRedeem / 100) * 100;
-    if (redeemable <= 0) return { valid: false, discount: 0, message: 'Minimum 100 TM Points required' };
-    const discount = (redeemable / 100) * 10; // 100 pts = Rs. 10
-    return { valid: true, points: redeemable, discount };
+    if (pointsToRedeem < 1) return { valid: false, discount: 0, message: 'Minimum 1 TM Point required' };
+    // 100 pts = Rs. 10 → 1 pt = Rs. 0.10, round to 2 decimal places
+    const discount = Math.round(pointsToRedeem * POINTS_REDEEM_RATE * 100) / 100;
+    return { valid: true, points: pointsToRedeem, discount };
 };
 
 /**
@@ -127,7 +126,16 @@ export const getTMPoints = async (req, res) => {
 export const validateRedemption = async (req, res) => {
     try {
         const userId = req.userId;
-        const { pointsToRedeem } = req.body;
+        const { pointsToRedeem, transactionAmount } = req.body;
+
+        // Minimum transaction amount check
+        const MIN_TRANSACTION = 400;
+        if (!transactionAmount || Number(transactionAmount) < MIN_TRANSACTION) {
+            return res.status(400).json({
+                success: false,
+                message: `TM Points can only be used on transactions of NPR ${MIN_TRANSACTION} or more`
+            });
+        }
 
         const user = await userModel.findById(userId).select('tmPoints');
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });

@@ -190,8 +190,8 @@ export const getBusSeatData = async (req, res) => {
     // Create the seat data structure needed by the frontend
     const busSeatData = [];
 
-    // Get the price from the route
-    const price = schedule.route.price || 1600;
+    // Get the price from the route (0 means dynamic fare by stops)
+    const price = schedule.route.price || 0;
 
     // Get bus with seat layout
     const bus = await Bus.findById(busId).select('seatLayout damagedSeats');
@@ -1056,6 +1056,131 @@ export const getAvailableCustomPrices = async (req, res) => {
       message: 'Server error while fetching available custom prices',
       error: error.message
     });
+  }
+};
+
+/**
+ * Dynamic fare calculation based on stop-segment fares.
+ * GET /api/bus/fare?busId=&pickupPointId=pickup2&dropPointId=drop4&date=
+ *
+ * Logic:
+ * 1. Build the full ordered stop list: [from, ...pickupPoints, ...dropPoints, to]
+ *    (using the route's stopFares array if set, otherwise positional)
+ * 2. Find boarding and destination stop indices
+ * 3. Sum the segment fares between them
+ * 4. Fall back to customPrices, then base price if stopFares not configured
+ */
+export const calculateFare = async (req, res) => {
+  try {
+    const { busId, pickupPointId, dropPointId, date } = req.query;
+
+    if (!busId || !pickupPointId || !dropPointId || !date) {
+      return res.status(400).json({
+        success: false,
+        message: 'busId, pickupPointId, dropPointId and date are required'
+      });
+    }
+
+    // Find schedule
+    const schedule = await Schedule.findOne({
+      bus: busId,
+      scheduleDates: {
+        $elemMatch: {
+          $gte: new Date(date),
+          $lt: new Date(new Date(date).setDate(new Date(date).getDate() + 1))
+        }
+      }
+    }).populate('route');
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, message: 'No schedule found for this bus and date' });
+    }
+
+    const route = schedule.route;
+    const basePrice = route.price || 0;
+
+    // Resolve stop names from IDs
+    const pickupIdx = parseInt(pickupPointId.replace('pickup', '')) - 1;
+    const dropIdx   = parseInt(dropPointId.replace('drop', ''))     - 1;
+
+    if (pickupIdx < 0 || pickupIdx >= route.pickupPoints.length) {
+      return res.status(400).json({ success: false, message: 'Invalid pickup point ID' });
+    }
+    if (dropIdx < 0 || dropIdx >= route.dropPoints.length) {
+      return res.status(400).json({ success: false, message: 'Invalid drop point ID' });
+    }
+
+    const boardingStop     = route.pickupPoints[pickupIdx];
+    const destinationStop  = route.dropPoints[dropIdx];
+
+    // ── Segment-based fare calculation ──────────────────────────────────
+    if (route.stopFares && route.stopFares.length >= 2) {
+      const stops = route.stopFares.map(sf => sf.stop);
+
+      const boardingStopIdx     = stops.indexOf(boardingStop);
+      const destinationStopIdx  = stops.indexOf(destinationStop);
+
+      if (boardingStopIdx === -1 || destinationStopIdx === -1) {
+        // Stops not in stopFares list — fall through to customPrices/base
+      } else if (boardingStopIdx >= destinationStopIdx) {
+        return res.status(400).json({
+          success: false,
+          message: 'Destination stop must come after boarding stop'
+        });
+      } else {
+        // Sum fares for segments from boardingStop+1 to destinationStop (inclusive)
+        let totalFare = 0;
+        for (let i = boardingStopIdx + 1; i <= destinationStopIdx; i++) {
+          totalFare += route.stopFares[i].fare || 0;
+        }
+
+        return res.json({
+          success: true,
+          data: {
+            fare: totalFare,
+            boardingStop,
+            destinationStop,
+            method: 'segment',
+            segments: route.stopFares.slice(boardingStopIdx + 1, destinationStopIdx + 1).map(sf => ({
+              stop: sf.stop,
+              fare: sf.fare
+            }))
+          }
+        });
+      }
+    }
+
+    // ── Fall back to customPrices ────────────────────────────────────────
+    const customEntry = route.customPrices?.find(
+      cp => cp.origin === boardingStop && cp.drop === destinationStop
+    );
+
+    if (customEntry) {
+      return res.json({
+        success: true,
+        data: {
+          fare: customEntry.price,
+          boardingStop,
+          destinationStop,
+          method: 'custom'
+        }
+      });
+    }
+
+    // ── Fall back to base price ──────────────────────────────────────────
+    return res.json({
+      success: true,
+      data: {
+        fare: basePrice,
+        boardingStop,
+        destinationStop,
+        method: 'base'
+      }
+    });
+
+  } catch (error) {
+    console.error('Fare calculation error:', error);
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 

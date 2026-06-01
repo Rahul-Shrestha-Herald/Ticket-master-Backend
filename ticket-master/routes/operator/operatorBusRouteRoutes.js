@@ -1,5 +1,5 @@
 import express from 'express';
-import { addRoute, getRoutes, getRouteById, updateRoute, deleteRoute, customizePrice } from '../../controllers/operator/busRouteController.js';
+import { addRoute, getRoutes, getRouteById, updateRoute, deleteRoute, customizePrice, updateStopFares } from '../../controllers/operator/busRouteController.js';
 import operatorAuth from '../../middleware/operator/operatorAuth.js';
 
 const router = express.Router();
@@ -10,5 +10,6 @@ router.post('/', operatorAuth, addRoute);
 router.put('/:id', operatorAuth, updateRoute);
 router.delete('/:id', operatorAuth, deleteRoute);
 router.put('/customize/:id', operatorAuth, customizePrice);
+router.put('/stop-fares/:id', operatorAuth, updateStopFares);
 
 export default router;

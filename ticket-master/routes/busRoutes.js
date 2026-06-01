@@ -10,6 +10,7 @@ import {
     releaseReservedSeats,
     getCustomPrice,
     getAvailableCustomPrices,
+    calculateFare,
     searchBuses
 } from '../controllers/busController.js';
 import userAuth from '../middleware/userAuth.js';
@@ -35,6 +36,9 @@ router.get('/custom-price', userAuth, getCustomPrice);
 // GET /api/bus/available-custom-prices?busId=123&date=2023-04-01 
 // - get all available custom prices for a bus route
 router.get('/available-custom-prices', userAuth, getAvailableCustomPrices);
+
+// GET /api/bus/fare?busId=&pickupPointId=pickup1&dropPointId=drop3&date= - dynamic fare calculation
+router.get('/fare', userAuth, calculateFare);
 
 // POST /api/bus/reserve-seats - temporarily reserve seats
 router.post('/reserve-seats', userAuth, reserveSeatsTemporarily);
